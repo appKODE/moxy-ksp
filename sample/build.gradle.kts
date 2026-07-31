@@ -14,8 +14,10 @@ application {
 
 dependencies {
     implementation(libs.moxy)
-    // Real external-consumer usage: resolved from mavenLocal() (see ../settings.gradle.kts), the
-    // same way a real project would after `./gradlew publishToMavenLocal` — not a project() shortcut.
+    // Real external-consumer coordinate, kept so this module reads like an actual downstream
+    // build.gradle.kts. Resolved to the root project via dependencySubstitution below (same
+    // composite-build pattern as build-publish-plugin/example-project) instead of mavenLocal, so
+    // CI doesn't need a publishToMavenLocal step before `./gradlew build test`.
     ksp("${providers.gradleProperty("pomGroupId").get()}:moxy-ksp:${providers.gradleProperty("versionName").get()}")
 
     // Strategy behavior tests run here (not in the root module's test suite) specifically because
@@ -24,4 +26,13 @@ dependencies {
     // the kotlin-compile-testing-based unit tests.
     testImplementation(libs.junit)
     testImplementation(libs.truth)
+}
+
+configurations.all {
+    if (name == "kspKotlinProcessorClasspath") {
+        resolutionStrategy.dependencySubstitution {
+            substitute(module("${providers.gradleProperty("pomGroupId").get()}:moxy-ksp"))
+                .using(project(":"))
+        }
+    }
 }
