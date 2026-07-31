@@ -19,6 +19,8 @@ import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFile
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
 import com.google.devtools.ksp.validate
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.writeTo
 
 private const val INJECT_PRESENTER = "com.arellomobile.mvp.presenter.InjectPresenter"
@@ -52,7 +54,10 @@ class MoxyKspProcessor(
     private val processedContainers = HashSet<String>()
     private val processedViews = HashSet<String>()
     private val additionalMoxyReflectorPackages = LinkedHashSet<String>()
-    private val usedStrategiesAccumulator = LinkedHashSet<KSClassDeclaration>()
+
+    // ClassName, not KSClassDeclaration: read from finish(), after every round's KSP2 Analysis-API
+    // session has ended (see InjectPresenterProcessor/InjectViewStateProcessor for the same pattern).
+    private val usedStrategiesAccumulator = LinkedHashSet<ClassName>()
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val deferred = mutableListOf<KSAnnotated>()
@@ -148,7 +153,7 @@ class MoxyKspProcessor(
             }
             fileSpec.writeTo(codeGenerator, aggregating = false, originatingKSFiles = originatingFiles)
 
-            usedStrategiesAccumulator += viewInterfaceProcessor.getUsedStrategies()
+            usedStrategiesAccumulator += viewInterfaceProcessor.getUsedStrategies().map { it.toClassName() }
         }
 
         return deferred

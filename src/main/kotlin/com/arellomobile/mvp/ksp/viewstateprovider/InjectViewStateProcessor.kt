@@ -21,13 +21,19 @@ private const val DEFAULT_VIEW = "com.arellomobile.mvp.DefaultView"
  */
 class InjectViewStateProcessor {
     private val usedViews = LinkedHashSet<KSClassDeclaration>()
-    private val presenterDecls = mutableListOf<KSClassDeclaration>()
+
+    // Stored as ClassName (a plain value), not KSClassDeclaration: MoxyKspProcessor.finish() reads
+    // this after every processing round has completed, when the KSP2 Analysis-API session that
+    // backed the declaration's lazy accessors (.qualifiedName, .toClassName(), equals/hashCode) is
+    // already invalid, throwing KaInvalidLifetimeOwnerAccessException. ClassName carries only the
+    // package/simple names already resolved here while the round is still fresh.
+    private val presenterClassNames = mutableListOf<ClassName>()
 
     fun getUsedViews(): Set<KSClassDeclaration> = usedViews
-    fun getPresenterClassNames(): List<KSClassDeclaration> = presenterDecls
+    fun getPresenterClassNames(): List<ClassName> = presenterClassNames
 
     fun process(presenterDecl: KSClassDeclaration): PresenterInfo {
-        presenterDecls.add(presenterDecl)
+        presenterClassNames.add(presenterDecl.toClassName())
         return PresenterInfo(presenterDecl, resolveViewStateClassName(presenterDecl))
     }
 

@@ -2,7 +2,6 @@ package com.arellomobile.mvp.ksp.reflector
 
 import com.arellomobile.mvp.MvpProcessor
 import com.arellomobile.mvp.ViewStateProvider
-import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -13,7 +12,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
-import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 
 private const val MOXY_REFLECTOR_DEFAULT_PACKAGE = "com.arellomobile.mvp"
@@ -37,14 +35,14 @@ object MoxyReflectorGenerator {
 
     fun generate(
         destinationPackage: String,
-        presenterDecls: List<KSClassDeclaration>,
-        presentersContainers: List<KSClassDeclaration>,
-        containerSuperclassChains: Map<KSClassDeclaration, List<KSClassDeclaration>>,
-        strategyDecls: List<KSClassDeclaration>,
+        presenterDecls: List<ClassName>,
+        presentersContainers: List<ClassName>,
+        containerSuperclassChains: Map<ClassName, List<ClassName>>,
+        strategyDecls: List<ClassName>,
         additionalMoxyReflectorPackages: List<String>,
     ): FileSpec {
-        val sortedPresenters = presenterDecls.sortedBy { it.qualifiedName?.asString() }
-        val sortedStrategies = strategyDecls.sortedBy { it.qualifiedName?.asString() }
+        val sortedPresenters = presenterDecls.sortedBy { it.canonicalName }
+        val sortedStrategies = strategyDecls.sortedBy { it.canonicalName }
         val sortedAdditionalPackages = additionalMoxyReflectorPackages.sorted()
         val presenterBinders = groupPresenterBindersByRoot(presentersContainers, containerSuperclassChains)
 
@@ -74,10 +72,9 @@ object MoxyReflectorGenerator {
             .build()
     }
 
-    private fun viewStateProvidersProperty(presenters: List<KSClassDeclaration>, additionalPackages: List<String>): PropertySpec {
+    private fun viewStateProvidersProperty(presenters: List<ClassName>, additionalPackages: List<String>): PropertySpec {
         val initializer = CodeBlock.builder().beginControlFlow("mutableMapOf<%T, %T>().apply", CLASS_STAR, ANY)
-        for (presenter in presenters) {
-            val presenterClassName = presenter.toClassName()
+        for (presenterClassName in presenters) {
             val providerClassName = ClassName(
                 presenterClassName.packageName,
                 presenterClassName.simpleNames.joinToString("$") + MvpProcessor.VIEW_STATE_PROVIDER_SUFFIX,
@@ -94,21 +91,20 @@ object MoxyReflectorGenerator {
             .build()
     }
 
-    private fun presenterBindersProperty(presenterBinders: Map<KSClassDeclaration, List<KSClassDeclaration>>, additionalPackages: List<String>): PropertySpec {
+    private fun presenterBindersProperty(presenterBinders: Map<ClassName, List<ClassName>>, additionalPackages: List<String>): PropertySpec {
         val listOfAny = List::class.asClassName().parameterizedBy(ANY)
         val initializer = CodeBlock.builder().beginControlFlow("mutableMapOf<%T, %T>().apply", CLASS_STAR, listOfAny)
         for ((container, binders) in presenterBinders) {
             val binderConstructorCalls = CodeBlock.builder()
-            binders.forEachIndexed { index, binder ->
+            binders.forEachIndexed { index, binderClassName ->
                 if (index > 0) binderConstructorCalls.add(", ")
-                val binderClassName = binder.toClassName()
                 val generatedBinderClassName = ClassName(
                     binderClassName.packageName,
                     binderClassName.simpleNames.joinToString("$") + MvpProcessor.PRESENTER_BINDER_SUFFIX,
                 )
                 binderConstructorCalls.add("%T()", generatedBinderClassName)
             }
-            initializer.add("put(%T::class.java, listOf(", container.toClassName())
+            initializer.add("put(%T::class.java, listOf(", container)
             initializer.add(binderConstructorCalls.build())
             initializer.add("))\n")
         }
@@ -122,10 +118,9 @@ object MoxyReflectorGenerator {
             .build()
     }
 
-    private fun strategiesProperty(strategies: List<KSClassDeclaration>, additionalPackages: List<String>): PropertySpec {
+    private fun strategiesProperty(strategies: List<ClassName>, additionalPackages: List<String>): PropertySpec {
         val initializer = CodeBlock.builder().beginControlFlow("mutableMapOf<%T, %T>().apply", CLASS_STAR, ANY)
-        for (strategy in strategies) {
-            val strategyClassName = strategy.toClassName()
+        for (strategyClassName in strategies) {
             initializer.addStatement("put(%T::class.java, %T())", strategyClassName, strategyClassName)
         }
         for (pkg in additionalPackages) {
@@ -190,27 +185,26 @@ object MoxyReflectorGenerator {
     /**
      * Collects presenter binders from superclasses that are also presenter containers, using
      * superclass chains precomputed by `InjectPresenterProcessor` while each container's round was
-     * still fresh — calling `KSType`/`KSTypeReference.resolve()` again here (this runs from
-     * `SymbolProcessor.finish()`, after every round has completed) throws
-     * `KaInvalidLifetimeOwnerAccessException` under KSP2.
+     * still fresh. `presentersContainers`/`containerSuperclassChains` are `ClassName` (a plain
+     * value), not `KSClassDeclaration` — this runs from `SymbolProcessor.finish()`, after every
+     * round has completed, and any lazy accessor on a stale KSP2 symbol (`.qualifiedName`, even
+     * `equals`/`hashCode`) throws `KaInvalidLifetimeOwnerAccessException` at that point.
      */
     private fun groupPresenterBindersByRoot(
-        presentersContainers: List<KSClassDeclaration>,
-        containerSuperclassChains: Map<KSClassDeclaration, List<KSClassDeclaration>>,
-    ): Map<KSClassDeclaration, List<KSClassDeclaration>> {
-        val extendingMap = HashMap<KSClassDeclaration, KSClassDeclaration?>()
+        presentersContainers: List<ClassName>,
+        containerSuperclassChains: Map<ClassName, List<ClassName>>,
+    ): Map<ClassName, List<ClassName>> {
+        val containerSet = presentersContainers.toHashSet()
+        val extendingMap = HashMap<ClassName, ClassName?>()
         for (container in presentersContainers) {
             val chain = containerSuperclassChains[container].orEmpty()
-            val parent = chain.firstOrNull { superclass ->
-                presentersContainers.any { it.qualifiedName?.asString() == superclass.qualifiedName?.asString() }
-            }
-            extendingMap[container] = parent
+            extendingMap[container] = chain.firstOrNull { it in containerSet }
         }
 
-        val result = LinkedHashMap<KSClassDeclaration, List<KSClassDeclaration>>()
-        for (container in presentersContainers.sortedBy { it.qualifiedName?.asString() }) {
+        val result = LinkedHashMap<ClassName, List<ClassName>>()
+        for (container in presentersContainers.sortedBy { it.canonicalName }) {
             val chain = mutableListOf(container)
-            var key: KSClassDeclaration? = container
+            var key: ClassName? = container
             while (true) {
                 key = extendingMap[key] ?: break
                 chain.add(key)

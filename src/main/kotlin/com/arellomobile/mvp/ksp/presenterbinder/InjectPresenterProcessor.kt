@@ -6,6 +6,8 @@ import com.arellomobile.mvp.ksp.KspUtil.directProperties
 import com.arellomobile.mvp.ksp.KspUtil.superclassOrNull
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSPropertyDeclaration
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.ksp.toClassName
 
 private const val INJECT_PRESENTER = "com.arellomobile.mvp.presenter.InjectPresenter"
 private const val PROVIDE_PRESENTER = "com.arellomobile.mvp.presenter.ProvidePresenter"
@@ -13,25 +15,26 @@ private const val PROVIDE_PRESENTER_TAG = "com.arellomobile.mvp.presenter.Provid
 
 /** Port of `com.arellomobile.mvp.compiler.presenterbinder.InjectPresenterProcessor`. */
 class InjectPresenterProcessor {
-    private val presentersContainers = mutableListOf<KSClassDeclaration>()
+    // Stored as ClassName (a plain value), not KSClassDeclaration: MoxyKspProcessor.finish() reads
+    // these after every processing round has completed, when the KSP2 Analysis-API session that
+    // backed the declaration's lazy accessors (.qualifiedName, .toClassName(), equals/hashCode) is
+    // already invalid, throwing KaInvalidLifetimeOwnerAccessException. Resolved here, once, while
+    // the round that discovered `container` is still fresh.
+    private val presentersContainers = mutableListOf<ClassName>()
+    private val containerSuperclassChains = HashMap<ClassName, List<ClassName>>()
 
-    // Resolved eagerly here (while the round that discovered `container` is still fresh) rather
-    // than later in MoxyKspProcessor.finish(): KSP2's Analysis-API-backed KSTypeReference.resolve()
-    // throws KaInvalidLifetimeOwnerAccessException ("PSI has changed since creation") if called on
-    // a stale round's symbols from finish(), after all processing rounds have completed.
-    private val containerSuperclassChains = HashMap<KSClassDeclaration, List<KSClassDeclaration>>()
+    fun getPresentersContainers(): List<ClassName> = presentersContainers.toList()
 
-    fun getPresentersContainers(): List<KSClassDeclaration> = presentersContainers.toList()
+    fun getContainerSuperclassChains(): Map<ClassName, List<ClassName>> = containerSuperclassChains
 
-    fun getContainerSuperclassChains(): Map<KSClassDeclaration, List<KSClassDeclaration>> = containerSuperclassChains
-
+    // No need to dedup against `presentersContainers` here: the caller (MoxyKspProcessor) already
+    // dedups per-round by qualified-name string before ever calling process() for a given container.
     fun process(field: KSPropertyDeclaration): TargetClassInfo? {
         val container = field.parentDeclaration as? KSClassDeclaration
             ?: error("Only class properties can be annotated @InjectPresenter: $field")
 
-        if (container in presentersContainers) return null
-        presentersContainers.add(container)
-        containerSuperclassChains[container] = superclassChain(container)
+        presentersContainers.add(container.toClassName())
+        containerSuperclassChains[container.toClassName()] = superclassChain(container)
 
         val fields = collectFields(container)
         bindProvidersToFields(fields, collectPresenterProviders(container))
@@ -40,11 +43,11 @@ class InjectPresenterProcessor {
         return TargetClassInfo(container, fields)
     }
 
-    private fun superclassChain(container: KSClassDeclaration): List<KSClassDeclaration> {
-        val chain = mutableListOf<KSClassDeclaration>()
+    private fun superclassChain(container: KSClassDeclaration): List<ClassName> {
+        val chain = mutableListOf<ClassName>()
         var current = container.superclassOrNull()
         while (current != null) {
-            chain.add(current)
+            chain.add(current.toClassName())
             current = current.superclassOrNull()
         }
         return chain
