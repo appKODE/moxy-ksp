@@ -3,8 +3,11 @@ package com.arellomobile.mvp.ksp.viewstate
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSType
+import com.squareup.kotlinpoet.ARRAY
+import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeVariableName
+import com.squareup.kotlinpoet.WildcardTypeName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.toTypeVariableName
 
@@ -27,7 +30,7 @@ class ViewMethod(
     val tag: String,
 ) {
     val name: String = functionDecl.simpleName.asString()
-    val parameters: List<Pair<String, TypeName>>
+    val parameters: List<Param>
     val typeVariables: List<TypeVariableName> = functionDecl.typeParameters.map { it.toTypeVariableName() }
     val argumentsString: String
 
@@ -40,10 +43,14 @@ class ViewMethod(
         parameters = functionDecl.parameters.mapIndexed { index, param ->
             val paramName = param.name?.asString() ?: "arg$index"
             val resolvedType = resolvedParameterTypes?.getOrNull(index) ?: param.type.resolve()
-            paramName to resolvedType.toTypeName()
+            val typeName = resolvedType.toTypeName()
+            val isVararg = param.isVararg
+            Param(paramName, if (isVararg) typeName.varargElement() else typeName, isVararg)
         }
 
-        argumentsString = parameters.joinToString(", ") { it.first }
+        // A vararg param must be spread into both the interface call (mvpView.method(...)) and the
+        // generated Command's own (also vararg, see ViewStateClassGenerator) constructor call.
+        argumentsString = parameters.joinToString(", ") { if (it.isVararg) "*${it.name}" else it.name }
     }
 
     fun commandClassName(): String =
@@ -60,3 +67,15 @@ class ViewMethod(
 
     override fun hashCode(): Int = 31 * name.hashCode() + parameters.hashCode()
 }
+
+/**
+ * `KSValueParameter.type` is documented ("the reference to the type of the parameter") without
+ * specifying whether, for a vararg parameter, that's the array type or its element type — and KSP1
+ * (descriptor-based) and KSP2 (FIR-based) disagree in practice. This isn't version-sniffing: since
+ * `KModifier.VARARG` re-adds the array-ness on the generated parameter regardless of which shape we
+ * started from, normalizing to the element type is correct for either engine, not a workaround for
+ * one of them.
+ */
+private fun TypeName.varargElement(): TypeName =
+    ((this as? ParameterizedTypeName)?.takeIf { it.rawType == ARRAY }?.typeArguments?.single() ?: this)
+        .let { if (it is WildcardTypeName) it.outTypes.single() else it }

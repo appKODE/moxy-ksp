@@ -2,6 +2,24 @@
 
 All notable changes to moxy-ksp will be documented in this file.
 
+## [1.0.2-1.5.6] - 2026-08-01
+
+### Fixed
+
+- Vararg view methods generated a plain, non-vararg `Array` override parameter instead of a real
+  Kotlin `vararg` — inferred from the *shape* of the resolved parameter type, which KSP does not
+  actually specify for varargs (KSP1 returns the array type, KSP2 the element type). This meant:
+  Kotlin callers couldn't use natural vararg call syntax; a Java `Object... args` source produced
+  an invariant, non-null `Array<Any>` instead of the correct `Array<out Any?>`; and a
+  Kotlin-declared `vararg t: T` view method couldn't be overridden at all — a flat compile error,
+  masked so far only because every vararg view method in practice happens to be Java-declared.
+  Fixed by reading vararg-ness directly from `KSValueParameter.isVararg` (unambiguous, engine
+  -independent) and normalizing the resolved type to its element via a documented `varargElement()`
+  helper — not an engine check, since `KModifier.VARARG` re-adds the array-ness on either shape.
+  Added regression tests for the Java-source, Kotlin-declared, generic-substitution, and
+  overload-alongside-non-vararg cases (all four fail against the pre-fix code), plus a sample
+  module fixture exercising real vararg call syntax end-to-end.
+
 ## [1.0.1-1.5.6] - 2026-08-01
 
 ### Fixed

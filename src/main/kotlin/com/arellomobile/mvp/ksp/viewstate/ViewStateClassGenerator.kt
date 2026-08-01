@@ -4,12 +4,15 @@ import com.arellomobile.mvp.MvpProcessor
 import com.arellomobile.mvp.ksp.KspUtil
 import com.arellomobile.mvp.viewstate.MvpViewState
 import com.arellomobile.mvp.viewstate.ViewCommand
+import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.WildcardTypeName
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
@@ -54,9 +57,14 @@ object ViewStateClassGenerator {
             .addFunction(applyFun)
 
         val constructorBuilder = FunSpec.constructorBuilder()
-        for ((paramName, paramType) in method.parameters) {
-            constructorBuilder.addParameter(paramName, paramType)
-            classBuilder.addProperty(PropertySpec.builder(paramName, paramType).initializer(paramName).build())
+        for (param in method.parameters) {
+            // Kept vararg on the constructor too (not just the override function below): the field
+            // is later reused to both build this Command (%N(%L), spreading a vararg arg) and to
+            // re-call the interface method (mvpView.%L(%L), same spread) — see ViewMethod.argumentsString.
+            constructorBuilder.addParameter(paramSpec(param))
+            classBuilder.addProperty(
+                PropertySpec.builder(param.name, param.storedType()).initializer(param.name).build(),
+            )
         }
         classBuilder.primaryConstructor(constructorBuilder.build())
 
@@ -73,7 +81,7 @@ object ViewStateClassGenerator {
             .addModifiers(KModifier.OVERRIDE)
 
         method.typeVariables.forEach { builder.addTypeVariable(it) }
-        method.parameters.forEach { (paramName, paramType) -> builder.addParameter(paramName, paramType) }
+        method.parameters.forEach { builder.addParameter(paramSpec(it)) }
 
         builder
             .addStatement("val %L = %N(%L)", commandFieldName, commandClass, method.argumentsString)
@@ -91,4 +99,15 @@ object ViewStateClassGenerator {
 
         return builder.build()
     }
+
+    private fun paramSpec(param: Param): ParameterSpec =
+        ParameterSpec.builder(param.name, param.type)
+            .apply { if (param.isVararg) addModifiers(KModifier.VARARG) }
+            .build()
+
+    // A vararg constructor param is `Array<out T>` inside the constructor body (like any Kotlin
+    // vararg); the property that stores it declares that array type explicitly, not `vararg`
+    // itself — `vararg` is only valid on a function/constructor parameter.
+    private fun Param.storedType(): TypeName =
+        if (isVararg) ARRAY.parameterizedBy(WildcardTypeName.producerOf(type)) else type
 }
