@@ -94,6 +94,20 @@ class IncrementalReflectorTest {
         assertRegistersUntouchedFile(reflector())
     }
 
+    @Test
+    fun `MoxyReflector keeps a Java-declared container when only a Kotlin file is rebuilt`() {
+        writeProject()
+
+        build()
+        assertThat(reflector()).contains("JavaContainer::class.java")
+
+        touchedSource().appendText("\n// edited\n")
+        build()
+
+        assertSecondBuildWasIncremental()
+        assertThat(reflector()).contains("JavaContainer::class.java")
+    }
+
     /**
      * Everything declared in `Untouched.kt`: a presenter (view state provider), an
      * `@InjectPresenter` container (binder — the shape whose absence produced the reported
@@ -213,6 +227,25 @@ class IncrementalReflectorTest {
                 lateinit var presenter: UntouchedPresenter
 
                 override fun showUntouched(message: String) = Unit
+            }
+            """.trimIndent(),
+        )
+        // The reported crash is in a Java Activity, and a Java source is a different incremental
+        // input to KSP than a Kotlin one: it is never touched by these builds.
+        write(
+            "src/main/java/app/JavaContainer.java",
+            """
+            package app;
+
+            import com.arellomobile.mvp.presenter.InjectPresenter;
+
+            public class JavaContainer implements UntouchedView {
+                @InjectPresenter
+                public UntouchedPresenter presenter;
+
+                @Override
+                public void showUntouched(String message) {
+                }
             }
             """.trimIndent(),
         )
