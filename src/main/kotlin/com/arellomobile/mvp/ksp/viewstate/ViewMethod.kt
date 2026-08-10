@@ -3,6 +3,7 @@ package com.arellomobile.mvp.ksp.viewstate
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSType
+import com.google.devtools.ksp.symbol.Nullability
 import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.TypeName
@@ -45,7 +46,7 @@ class ViewMethod(
             val resolvedType = resolvedParameterTypes?.getOrNull(index) ?: param.type.resolve()
             val typeName = resolvedType.toTypeName()
             val isVararg = param.isVararg
-            Param(paramName, if (isVararg) typeName.varargElement() else typeName, isVararg)
+            Param(paramName, if (isVararg) typeName.varargElement() else typeName.platformAsNullable(resolvedType), isVararg)
         }
 
         // A vararg param must be spread into both the interface call (mvpView.method(...)) and the
@@ -76,6 +77,23 @@ class ViewMethod(
  * started from, normalizing to the element type is correct for either engine, not a workaround for
  * one of them.
  */
+/**
+ * A Java-declared view method's parameters resolve to *platform* types, which KotlinPoet can only
+ * render as non-null — and a non-null parameter on a public Kotlin function gets an
+ * `Intrinsics.checkNotNullParameter` call, so a Java caller passing null blows up inside the
+ * generated `$$State` instead of reaching the view. The apt original generated Java and had no such
+ * check, so this is a port regression, not a Moxy behaviour change.
+ *
+ * Platform means "nullability unknown"; the safe reading for a parameter we only ever pass through
+ * is nullable. A Java view annotated `@NonNull`/`@Nullable` doesn't resolve to PLATFORM at all, so
+ * those keep their declared nullability, as does anything Kotlin-declared.
+ *
+ * Only the top level is coerced: type arguments are erased at runtime and never null-checked, and
+ * vararg parameters go through [varargElement] instead (its element type is likewise unchecked).
+ */
+private fun TypeName.platformAsNullable(resolved: KSType): TypeName =
+    if (resolved.nullability == Nullability.PLATFORM) copy(nullable = true) else this
+
 private fun TypeName.varargElement(): TypeName =
     ((this as? ParameterizedTypeName)?.takeIf { it.rawType == ARRAY }?.typeArguments?.single() ?: this)
         .let { if (it is WildcardTypeName) it.outTypes.single() else it }

@@ -2,6 +2,19 @@
 
 All notable changes to moxy-ksp will be documented in this file.
 
+## [1.0.4-1.5.6] - 2026-08-10
+
+### Fixed
+
+- **Java-declared view interfaces crashed with `NullPointerException` when passed a null argument.**
+  A Java method parameter resolves to a *platform* type, which KotlinPoet can only render as
+  non-null, so the generated Kotlin `$$State` override (and its `Command` constructor) picked up an
+  `Intrinsics.checkNotNullParameter` call that the apt original — which generated Java — never had.
+  Calling `view.showText(null)` on a `void showText(String text)` view therefore blew up inside the
+  generated state class instead of reaching the view. Platform parameters are now generated as
+  nullable; parameters annotated `@Nullable`/`@NonNull` and anything Kotlin-declared keep their
+  declared nullability, so no existing non-null contract is loosened.
+
 ## [1.0.3-1.5.6] - 2026-08-10
 
 ### Fixed
