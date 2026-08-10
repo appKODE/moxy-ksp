@@ -9,6 +9,7 @@ import com.arellomobile.mvp.ksp.KspUtil.superInterfaces
 import com.arellomobile.mvp.ksp.viewstateprovider.InjectViewStateProcessor
 import com.arellomobile.mvp.ksp.viewstateprovider.ViewStateProviderClassGenerator
 import com.google.devtools.ksp.processing.CodeGenerator
+import com.google.devtools.ksp.processing.Dependencies
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.processing.Resolver
 import com.google.devtools.ksp.processing.SymbolProcessor
@@ -201,7 +202,7 @@ class MoxyKspProcessor(
             additionalMoxyReflectorPackages = additionalMoxyReflectorPackages.toList(),
         )
 
-        fileSpec.writeTo(codeGenerator, aggregating = true)
+        fileSpec.writeTo(codeGenerator, Dependencies.ALL_FILES)
     }
 }
 

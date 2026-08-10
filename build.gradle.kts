@@ -29,6 +29,7 @@ dependencies {
     implementation(libs.moxy)
 
     testImplementation(kotlin("test"))
+    testImplementation(gradleTestKit())
     testImplementation(libs.junit)
     testImplementation(libs.truth)
     testImplementation(libs.kctfork.core)
@@ -42,6 +43,13 @@ tasks.test {
     testLogging {
         events("passed", "skipped", "failed")
     }
+
+    dependsOn(tasks.jar)
+    val processorClasspath = files(tasks.jar) + configurations.runtimeClasspath.get()
+    systemProperty("moxyKsp.processorClasspath", processorClasspath.asPath)
+    systemProperty("moxyKsp.runtimeClasspath", configurations.runtimeClasspath.get().asPath)
+    systemProperty("moxyKsp.kotlinVersion", libs.versions.kotlin.get())
+    systemProperty("moxyKsp.kspVersion", libs.versions.ksp.get())
 }
 
 mavenPublishing {

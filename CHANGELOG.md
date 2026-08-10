@@ -2,6 +2,39 @@
 
 All notable changes to moxy-ksp will be documented in this file.
 
+## [1.0.3-1.5.6] - 2026-08-10
+
+### Fixed
+
+- Incremental builds emitted a **partial `MoxyReflector`**: it listed only the presenters,
+  containers and strategies whose source files happened to be dirty in that build, and every
+  untouched screen silently dropped out of the registry. Because moxy 1.5.6's `MvpProcessor` treats
+  a generated `MoxyReflector` as authoritative — `getPresenterBinders(clazz)` returning nothing
+  means no binder, with no error and no log — an unregistered Activity/Fragment simply got no
+  presenter attached, surfacing later as `UninitializedPropertyAccessException: lateinit property
+  mPresenter has not been initialized` or as a screen whose view methods are never called. Whether
+  a given screen worked depended on which files you last edited; a clean build repaired it, so this
+  never affected CI-built or released artifacts, only local incremental installs.
+  The reflector is a whole-module aggregate, but every root function a processor can read state
+  from (`Resolver.getSymbolsWithAnnotation`, and `getAllFiles()` too — it returns the dirty set, not
+  the whole compilation) yields only dirty files, so it could only ever be built from the subset
+  KSP handed over that round. Fixed by writing it with `Dependencies.ALL_FILES` instead of
+  `aggregating = true`: KSP then treats every source file as an input of that output and re-dirties
+  the whole module whenever it must be regenerated. This makes KSP reprocess the module on any
+  change — a whole-module registry has no cheaper correct form, since KSP gives a processor no way
+  to carry per-file state across builds. `ksp.incremental=false` is no longer needed as a
+  workaround.
+  Covered by `IncrementalReflectorTest`, which drives real multi-invocation Gradle builds through
+  TestKit, one per kind of incremental input change: a **modified** source file, an **added** one,
+  and a **removed** one. Each asserts that the regenerated reflector still registers everything
+  declared in the files it did not touch — presenter, `@InjectPresenter` container and non-default
+  strategy alike — and the removal case runs `build`, so the surviving generated sources must also
+  still compile against the regenerated registry. Both tests fail against the pre-fix code, where
+  the reflector collapses to just the edited file and `sPresenterBinders` comes out empty — the
+  exact shape of the reported crash. TestKit rather than the existing `kotlin-compile-testing`
+  suite because the latter deletes KSP's caches directory before every compilation, making each one
+  a full rebuild in which this defect cannot occur.
+
 ## [1.0.2-1.5.6] - 2026-08-01
 
 ### Fixed
