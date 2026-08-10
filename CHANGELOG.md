@@ -2,6 +2,21 @@
 
 All notable changes to moxy-ksp will be documented in this file.
 
+## [1.0.5-1.5.6] - 2026-08-10
+
+### Fixed
+
+- **`overrides nothing` compile error on Java view parameters annotated `@NotNull`.** The 1.0.4
+  platform-nullability fix trusted KSP's `Nullability` verdict alone, but whether a not-null
+  annotation is reported as `NOT_NULL` or as `PLATFORM` varies with the annotation artifact and the
+  KSP/Kotlin versions in use, while the Kotlin compiler reading the same Java source always honours
+  it. Where the two disagreed the generated `$$State` declared the parameter nullable and no longer
+  overrode the view method, failing the build (`'setChannelLogoName' overrides nothing`). A
+  nullability annotation on the parameter now decides: `@NotNull`/`@NonNull`/`@Nonnull` generates a
+  non-null parameter and `@Nullable`/`@CheckForNull` a nullable one, whatever KSP reports — the same
+  mismatch is a compile error in both directions. Only genuinely unannotated Java parameters fall
+  back to the platform-means-nullable rule, so the 1.0.4 fix still holds.
+
 ## [1.0.4-1.5.6] - 2026-08-10
 
 ### Fixed

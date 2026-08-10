@@ -3,6 +3,7 @@ package com.arellomobile.mvp.ksp.viewstate
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSType
+import com.google.devtools.ksp.symbol.KSValueParameter
 import com.google.devtools.ksp.symbol.Nullability
 import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ParameterizedTypeName
@@ -46,7 +47,12 @@ class ViewMethod(
             val resolvedType = resolvedParameterTypes?.getOrNull(index) ?: param.type.resolve()
             val typeName = resolvedType.toTypeName()
             val isVararg = param.isVararg
-            Param(paramName, if (isVararg) typeName.varargElement() else typeName.platformAsNullable(resolvedType), isVararg)
+            val type = if (isVararg) {
+                typeName.varargElement()
+            } else {
+                typeName.platformAsNullable(resolvedType, param)
+            }
+            Param(paramName, type, isVararg)
         }
 
         // A vararg param must be spread into both the interface call (mvpView.method(...)) and the
@@ -85,14 +91,38 @@ class ViewMethod(
  * check, so this is a port regression, not a Moxy behaviour change.
  *
  * Platform means "nullability unknown"; the safe reading for a parameter we only ever pass through
- * is nullable. A Java view annotated `@NonNull`/`@Nullable` doesn't resolve to PLATFORM at all, so
- * those keep their declared nullability, as does anything Kotlin-declared.
+ * is nullable. Anything Kotlin-declared keeps its declared nullability, as does a Java parameter
+ * whose not-null annotation KSP resolves to [Nullability.NOT_NULL].
+ *
+ * A nullability annotation on the parameter overrides KSP's verdict, because whether KSP reports
+ * one as NOT_NULL/NULLABLE or falls back to PLATFORM varies with the annotation artifact and the
+ * KSP/Kotlin versions in use, while the Kotlin compiler reading the same Java source always honours
+ * it. Disagreeing in either direction is a hard compile error — the parameter in the generated
+ * `$$State` "overrides nothing" — so the annotation wins whenever there is one.
  *
  * Only the top level is coerced: type arguments are erased at runtime and never null-checked, and
  * vararg parameters go through [varargElement] instead (its element type is likewise unchecked).
  */
-private fun TypeName.platformAsNullable(resolved: KSType): TypeName =
-    if (resolved.nullability == Nullability.PLATFORM) copy(nullable = true) else this
+private fun TypeName.platformAsNullable(resolved: KSType, param: KSValueParameter): TypeName =
+    when (param.declaredNullability() ?: resolved.nullability) {
+        Nullability.NOT_NULL -> copy(nullable = false)
+        else -> copy(nullable = true) // NULLABLE, and PLATFORM read as "unknown, so assume nullable".
+    }
+
+private val NOT_NULL_ANNOTATION_NAMES = setOf("NotNull", "NonNull", "Nonnull")
+private val NULLABLE_ANNOTATION_NAMES = setOf("Nullable", "CheckForNull")
+
+/** `null` when the parameter carries no nullability annotation this can recognise by name. */
+private fun KSValueParameter.declaredNullability(): Nullability? =
+    (annotations + type.annotations)
+        .mapNotNull {
+            when (it.shortName.asString()) {
+                in NULLABLE_ANNOTATION_NAMES -> Nullability.NULLABLE
+                in NOT_NULL_ANNOTATION_NAMES -> Nullability.NOT_NULL
+                else -> null
+            }
+        }
+        .firstOrNull()
 
 private fun TypeName.varargElement(): TypeName =
     ((this as? ParameterizedTypeName)?.takeIf { it.rawType == ARRAY }?.typeArguments?.single() ?: this)

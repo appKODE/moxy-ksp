@@ -52,6 +52,130 @@ class ViewStatePlatformNullabilityTest {
     }
 
     @Test
+    fun `Java parameter annotated NotNull stays non-null`() {
+        val result = CompileTestHelper.compile(
+            CompileTestHelper.java(
+                "JavaView.java",
+                """
+                package sample;
+
+                import com.arellomobile.mvp.MvpView;
+                import org.jetbrains.annotations.NotNull;
+
+                public interface JavaView extends MvpView {
+                    void showText(@NotNull String text);
+                }
+                """.trimIndent(),
+            ),
+            CompileTestHelper.kotlin(
+                "Sample.kt",
+                """
+                package sample
+
+                import com.arellomobile.mvp.InjectViewState
+                import com.arellomobile.mvp.MvpPresenter
+
+                @InjectViewState
+                class SamplePresenter : MvpPresenter<JavaView>()
+                """.trimIndent(),
+            ),
+        )
+        // Kotlin reads the declaration-site `@NotNull` and sees a non-null parameter; a nullable
+        // parameter in the generated `$$State` would not override it ("overrides nothing").
+        assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+    }
+
+    @Test
+    fun `Java parameter with a not-null annotation KSP reports as platform stays non-null`() {
+        val result = CompileTestHelper.compile(
+            CompileTestHelper.java(
+                "NonNull.java",
+                """
+                package sample;
+
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Target;
+
+                // Not one of the annotations Kotlin's Java type enhancement knows, so the parameter
+                // resolves to a platform type — standing in for any not-null annotation the running
+                // KSP version fails to interpret.
+                @Target(ElementType.PARAMETER)
+                public @interface NonNull {}
+                """.trimIndent(),
+            ),
+            CompileTestHelper.java(
+                "JavaView.java",
+                """
+                package sample;
+
+                import com.arellomobile.mvp.MvpView;
+
+                public interface JavaView extends MvpView {
+                    void showText(@NonNull String text);
+                }
+                """.trimIndent(),
+            ),
+            CompileTestHelper.kotlin(
+                "Sample.kt",
+                """
+                package sample
+
+                import com.arellomobile.mvp.InjectViewState
+                import com.arellomobile.mvp.MvpPresenter
+
+                @InjectViewState
+                class SamplePresenter : MvpPresenter<JavaView>()
+                """.trimIndent(),
+            ),
+        )
+        assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+
+        val commandClass = result.classLoader.loadClass("sample.JavaView\$\$State\$ShowTextCommand")
+        val thrown = runCatching {
+            commandClass.getDeclaredConstructor(String::class.java).newInstance(null as String?)
+        }.exceptionOrNull()
+        assertThat(thrown?.cause).isInstanceOf(NullPointerException::class.java)
+    }
+
+    @Test
+    fun `Java parameter with a nullable annotation KSP reports as not-null stays nullable`() {
+        val result = CompileTestHelper.compile(
+            CompileTestHelper.java(
+                "JavaView.java",
+                """
+                package sample;
+
+                import com.arellomobile.mvp.MvpView;
+                import org.jetbrains.annotations.NotNull;
+                import org.jetbrains.annotations.Nullable;
+
+                public interface JavaView extends MvpView {
+                    // @NotNull on the method (the return type) must not leak onto the parameter.
+                    @NotNull
+                    void showText(@Nullable String text);
+                }
+                """.trimIndent(),
+            ),
+            CompileTestHelper.kotlin(
+                "Sample.kt",
+                """
+                package sample
+
+                import com.arellomobile.mvp.InjectViewState
+                import com.arellomobile.mvp.MvpPresenter
+
+                @InjectViewState
+                class SamplePresenter : MvpPresenter<JavaView>()
+                """.trimIndent(),
+            ),
+        )
+        assertThat(result.exitCode).isEqualTo(KotlinCompilation.ExitCode.OK)
+
+        val commandClass = result.classLoader.loadClass("sample.JavaView\$\$State\$ShowTextCommand")
+        assertThat(commandClass.getDeclaredConstructor(String::class.java).newInstance(null as String?)).isNotNull()
+    }
+
+    @Test
     fun `Kotlin-declared non-null parameter stays non-null`() {
         val result = CompileTestHelper.compile(
             CompileTestHelper.kotlin(
